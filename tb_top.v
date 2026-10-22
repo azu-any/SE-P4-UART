@@ -148,6 +148,13 @@ module tb_top_uart_de10lite;
         end
     endtask
 
+
+	// Monitor en tiempo real del estado de la FPGA (FUERA del bloque initial)
+    always @(uut.state) begin
+        $display("[%0t ns] [DEBUG FPGA] Estado cambio a: %0d | rx_done=%b, rx_data=0x%02h, pn_done=%b", 
+                 $time, uut.state, uut.rx_done, uut.rx_data, uut.pn_done);
+    end
+
     // 7. Secuencia de pruebas
     initial begin
         UART_RX             = 1'b1;
@@ -159,44 +166,30 @@ module tb_top_uart_de10lite;
         #100;
         RESET_N = 1'b1;
         #(BIT_PERIOD * 4); 
-		
-		// Monitor en tiempo real del estado de la FPGA
-		always @(uut.state) begin
-		    $display("[%0t ns] [DEBUG FPGA] Estado cambio a: %0d | rx_done=%b, rx_data=0x%02h, pn_done=%b", 
-		             $time, uut.state, uut.rx_done, uut.rx_data, uut.pn_done);
-		end
 
-        // =========================================================
-        // PRUEBA 1: n = 10 -> 10^(5/2) ˜ 316.2277
-        // =========================================================
+        // PRUEBA 1: n = 10 -> 10^(5/2) ~ 316.2277
         fork
             send_uart_frame_32bit(32'd10);
             verify_result(32'd10);
         join
-
         #(BIT_PERIOD * 10);
 
-        // =========================================================
-        // PRUEBA 2: n = 50 -> 50^(5/2) ˜ 17677.6695
-        // =========================================================
+        // PRUEBA 2: n = 50 -> 50^(5/2) ~ 17677.6695
         fork
             send_uart_frame_32bit(32'd50);
             verify_result(32'd50);
         join
-
         #(BIT_PERIOD * 10);
 
-        // =========================================================
-        // PRUEBA 3: n = 85 -> 85^(5/2) ˜ 66610.6654
-        // =========================================================
+        // PRUEBA 3: n = 85 -> 85^(5/2) ~ 66610.6654
         fork
             send_uart_frame_32bit(32'd85);
             verify_result(32'd85);
         join
-
         #(BIT_PERIOD * 10);
+
         $display("\n--- Simulacion completada exitosamente ---");
-        $stop;
+        $finish;
     end
 
 endmodule

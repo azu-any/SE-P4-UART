@@ -1,82 +1,137 @@
-% ============================================
-% Script: bidireccional_matlab.m (n^(5/2))
-% ============================================
+% =========================================================================
+% Script: test_uart_fpga.m
+% Descripcion: Envia un entero n de 32 bits desde MATLAB -> ESP32 -> FPGA,
+%              recibe el resultado de 96 bits en formato Q80.16 (n^(5/2))
+%              y lo compara contra el valor teorico.
+% =========================================================================
 clear
 clc
 
-PORT = "COM3";     % Cambiar por el puerto correspondiente a la FPGA / USB-UART
-BAUD = 9600;
+% 1. Configuracion del puerto serial
+% En Windows: "COM3", "COM4", etc.
+% En macOS:   "/dev/cu.SLAB_USBtoUART" o "/dev/cu.usbserial-xxxx"
+%            (Puedes ver los puertos disponibles ejecutando: serialportlist("available"))
+PORT = "COM3";     
+BAUD = 9600;       % Debe coincidir exactamente con Serial.begin(9600) del ESP32
 
-HEADER = uint8(hex2dec('AA'));
-FOOTER = uint8(hex2dec('55'));
-BYTES_PAYLOAD = 12;
+HEADER        = uint8(hex2dec('AA'));
+FOOTER        = uint8(hex2dec('55'));
+BYTES_PAYLOAD = 12; % 96 bits en formato Q80.16 = 12 bytes
 
+% 2. Abrir conexion serial y esperar el reinicio automatico del ESP32
+disp("Abriendo puerto serial y esperando inicio del ESP32...");
 s = serialport(PORT, BAUD, "Timeout", 2.0);
-pause(1.5);
-flush(s);
+pause(2.5); % El ESP32 tarda ~2s en arrancar al abrir el puerto serial
+flush(s);   % Limpiar mensajes del bootloader del ESP32
 
-disp("Comunicacion bidireccional iniciada");
-disp("La FPGA calculara n^(5/2) en punto fijo");
+disp("==========================================================");
+disp(" Comunicacion bidireccional iniciada (MATLAB <-> ESP32 <-> FPGA)");
+disp(" Calculando f(n) = n^(5/2) en formato punto fijo Q80.16");
+disp("==========================================================");
 
 while true
-    valor = input('Ingrese un numero entero (o numero negativo para salir): ');
+    valor = input('\nIngrese un numero entero n >= 0 (o negativo para salir): ');
+
+    if isempty(valor)
+        continue;
+    end
 
     if valor < 0
-        disp('Finalizando comunicacion.');
+        disp('Finalizando comunicacion y cerrando puerto...');
         break;
     end
 
-    % 1. Empaquetar n en 4 bytes (little-endian) y armar la trama
-    n_bytes = typecast(uint32(valor), 'uint8');
+    % 3. Empaquetar n en 4 bytes (Little-Endian) y armar la trama de 6 bytes
+    n_uint32 = uint32(floor(valor));
+    n_bytes  = typecast(n_uint32, 'uint8'); % [LSB, b1, b2, MSB]
     trama_tx = [HEADER, n_bytes, FOOTER];
 
+    % Limpiar buffer de entrada antes de enviar nueva solicitud
     flush(s);
+
+
+    % 4. Transmitir trama de 6 bytes hacia el ESP32 -> FPGA
     write(s, trama_tx, "uint8");
-    disp(['Enviado: ', num2str(valor)]);
+    fprintf('Enviado n = %u | Trama TX (6 bytes): %s\n', ...
+            n_uint32, sprintf('0x%02X ', trama_tx));
 
-    % 2. Reemplazo del pause(0.2): Espera activa hasta recibir los 14 bytes minimos
-    t_inicio = tic;
-    tiempo_limite = 1.0; % Timeout de 1 segundo
-    while s.NumBytesAvailable < 14 && toc(t_inicio) < tiempo_limite
-        pause(0.002); % Pausa minima de 2 ms para no saturar la CPU
-    end
+    % 5. Paso 1 de Recepcion: Buscar el delimitador de inicio 0xAA
+    header_found  = false;
+    tiempo_limite = 1.5; % 1.5 segundos de timeout maximo
+    t_inicio      = tic;
 
-    % 3. Procesar datos recibidos
-    if s.NumBytesAvailable >= 14
-        % Buscar sincronizacion con el delimitador 0xAA
-        rx_header = read(s, 1, "uint8");
-        while rx_header ~= HEADER && s.NumBytesAvailable > 0
-            rx_header = read(s, 1, "uint8");
-        end
-
-        if rx_header == HEADER
-            payload = read(s, BYTES_PAYLOAD, "uint8");
-            rx_footer = read(s, 1, "uint8");
-
-            if rx_footer == FOOTER
-                % Reconstruir entero de 96 bits (LSB primero)
-                pesos = 2 .^ (8 * (0:(BYTES_PAYLOAD - 1)));
-                raw_int96 = sum(double(payload) .* pesos);
-
-                % Convertir de formato Q80.16 (16 bits fraccionarios)
-                resultado_fpga = raw_int96 / 65536.0;
-
-                % Calculo teorico para comparacion
-                teorico = (double(valor)^2) * sqrt(double(valor));
-
-                disp(['Respuesta FPGA: ', num2str(resultado_fpga, '%.4f')]);
-                disp(['Valor Teorico:  ', num2str(teorico, '%.4f')]);
+    while toc(t_inicio) < tiempo_limite
+        if s.NumBytesAvailable > 0
+            rx_byte = read(s, 1, "uint8");
+            if rx_byte == HEADER
+                header_found = true;
+                break;
             else
-                disp('Error: Delimitador de fin 0x55 invalido.');
+                fprintf('  [Aviso] Byte descartado antes de cabecera: 0x%02X\n', rx_byte);
             end
         else
-            disp('Error: No se encontro el delimitador 0xAA.');
+            pause(0.002);
         end
-    else
-        disp('Error: Tiempo de espera agotado (Timeout), no se recibieron los 14 bytes.');
     end
 
-    disp('--------------------------------------------');
+    % 6. Paso 2 de Recepcion: Leer los 13 bytes restantes (12 payload + 1 footer)
+    if header_found
+        % Esperar a que lleguen los 13 bytes completos despues de 0xAA
+        while s.NumBytesAvailable < (BYTES_PAYLOAD + 1) && toc(t_inicio) < tiempo_limite
+            pause(0.002);
+        end
+
+        if s.NumBytesAvailable >= (BYTES_PAYLOAD + 1)
+            payload   = read(s, BYTES_PAYLOAD, "uint8");
+            rx_footer = read(s, 1, "uint8");
+
+            trama_rx = [HEADER, payload, rx_footer];
+            fprintf('Recibido      | Trama RX (14 bytes): %s\n', ...
+                    sprintf('0x%02X ', trama_rx));
+
+            if rx_footer == FOOTER
+                % 7. Reconstruir el numero de 96 bits en formato Q80.16 (Little-Endian)
+                % Bytes 1..2  (indices 1..2 en MATLAB) = Parte fraccionaria (16 bits)
+                % Bytes 3..12 (indices 3..12 en MATLAB) = Parte entera (80 bits)
+                pesos     = 2 .^ (8 * (0:(BYTES_PAYLOAD - 1)));
+                raw_int96 = sum(double(payload) .* pesos);
+
+                % Separar parte fraccionaria y entera para inspeccion
+                frac_raw = double(payload(1)) + double(payload(2)) * 256.0;
+                int_part = sum(double(payload(3:12)) .* (2 .^ (8 * (0:9))));
+
+                % Convertir de Q80.16 a punto flotante dividiendo entre 2^16 (65536)
+                resultado_fpga = raw_int96 / 65536.0;
+
+                % Calculo teorico en doble precision
+                n_double = double(n_uint32);
+                teorico  = (n_double ^ 2) * sqrt(n_double);
+                error_abs = abs(resultado_fpga - teorico);
+
+                disp('----------------------------------------------------------');
+                fprintf('  Parte Entera (FPGA):       %.0f\n', int_part);
+                fprintf('  Parte Fraccionaria (FPGA): %.0f / 65536 (%.4f)\n', ...
+                        frac_raw, frac_raw / 65536.0);
+                fprintf('  Resultado FPGA (Q80.16):   %.4f\n', resultado_fpga);
+                fprintf('  Valor Teorico (MATLAB):    %.4f\n', teorico);
+                fprintf('  Error Absoluto:            %.6e\n', error_abs);
+                disp('----------------------------------------------------------');
+            else
+                fprintf('Error: Delimitador de fin invalido (se recibio 0x%02X, se esperaba 0x55).\n', rx_footer);
+            end
+        else
+            fprintf('Error: Se recibio 0xAA pero solo llegaron %d de los 13 bytes restantes.\n', s.NumBytesAvailable);
+        end
+    else
+        if s.NumBytesAvailable > 0
+            basura = read(s, s.NumBytesAvailable, "uint8");
+            fprintf('Error: No se encontro 0xAA. Bytes en buffer: %s\n', sprintf('0x%02X ', basura));
+        else
+            disp('Error: Timeout agotado (0 bytes recibidos desde el ESP32/FPGA).');
+        end
+    end
 end
 
+% Cerrar y liberar el puerto serial
 clear s
+disp('Puerto serial liberado correctamente.');

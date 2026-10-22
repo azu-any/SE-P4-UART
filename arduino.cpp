@@ -1,92 +1,78 @@
 #include <Arduino.h>
 
-#define RXD2 16 // Conectar a UART_TX de la FPGA
-#define TXD2 17 // Conectar a UART_RX de la FPGA
+#define RXD2 16 // Conectar a UART_TX de la FPGA (PIN_W10 o PIN_AB6)
+#define TXD2 17 // Conectar a UART_RX de la FPGA (PIN_V10 o PIN_AB5)
+#define LED_PIN 2 // LED integrado del ESP32 para diagnostico visual
 
 const uint8_t HEADER = 0xAA;
 const uint8_t FOOTER = 0x55;
 
+const size_t MATLAB_FRAME_LEN = 6;  // [0xAA, n0, n1, n2, n3, 0x55]
+const size_t FPGA_FRAME_LEN   = 14; // [0xAA, b0..b11 (Q80.16), 0x55]
+
 void setup() {
-  Serial.begin(115200);   // Monitor Serie hacia la PC
-  Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2); // Enlace UART con la FPGA
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW);
 
-  delay(2000);
-  Serial.println("\n=== ESP32 listo: Comunicacion con FPGA DE10-Lite ===");
-}
+  // IMPORTANTE: Ambos a 9600 baudios para coincidir con MATLAB (BAUD = 9600) y la FPGA
+  Serial.begin(9600);                          // USB hacia MATLAB (PC)
+  Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2); // UART fisico hacia la FPGA DE10-Lite
 
-void send_and_receive(uint32_t n_val) {
-  Serial.println("----------------------------------------------");
-  Serial.printf("Enviando n = %u\n", n_val);
-
-  // 1. Construir y enviar trama hacia la FPGA
-  uint8_t tx_frame[6];
-  tx_frame[0] = HEADER;
-  tx_frame[1] = (uint8_t)(n_val & 0xFF);
-  tx_frame[2] = (uint8_t)((n_val >> 8) & 0xFF);
-  tx_frame[3] = (uint8_t)((n_val >> 16) & 0xFF);
-  tx_frame[4] = (uint8_t)((n_val >> 24) & 0xFF);
-  tx_frame[5] = FOOTER;
-
-  // Limpiar buffer previo y transmitir
+  // Limpiar buffers iniciales tras el arranque
+  delay(500);
+  while (Serial.available())  Serial.read();
   while (Serial2.available()) Serial2.read();
-  Serial2.write(tx_frame, 6);
-
-  // 2. Esperar respuesta de la FPGA
-  unsigned long start_time = millis();
-  while (Serial2.available() < 14) {
-    if (millis() - start_time > 1500) {
-      Serial.println("[ERROR] Tiempo de espera agotado (Timeout).");
-      return;
-    }
-  }
-
-  // 3. Leer cabecera 0xAA
-  uint8_t rx_header = Serial2.read();
-  if (rx_header != HEADER) {
-    Serial.printf("[ERROR] Cabecera invalida: 0x%02X\n", rx_header);
-    return;
-  }
-
-  // 4. Leer los 12 bytes del resultado (Q80.16)
-  uint8_t payload[12];
-  Serial2.readBytes(payload, 12);
-
-  // 5. Leer delimitador de fin 0x55
-  uint8_t rx_footer = Serial2.read();
-  if (rx_footer != FOOTER) {
-    Serial.printf("[ERROR] Delimitador final invalido: 0x%02X\n", rx_footer);
-    return;
-  }
-
-  // 6. Reconstruir el valor numerico
-  // Para valores moderados (n < 65536), los primeros 64 bits cubren el resultado con holgura:
-  uint64_t low64 = 0;
-  for (int i = 0; i < 8; i++) {
-    low64 |= ((uint64_t)payload[i]) << (i * 8);
-  }
-
-  // Separar parte entera y parte decimal (Q.16: 16 bits inferiores)
-  uint64_t int_part = low64 >> 16;
-  uint16_t frac_part = low64 & 0xFFFF;
-  double fpga_real = (double)low64 / 65536.0;
-
-  double theoretical = (double)n_val * (double)n_val * sqrt((double)n_val);
-
-  Serial.printf("Resultado FPGA:    %.4f\n", fpga_real);
-  Serial.printf("Parte Entera:      %llu\n", int_part);
-  Serial.printf("Parte Fraccionaria: %u / 65536 (aprox. 0.%04u)\n", frac_part, (uint32_t)((frac_part * 10000ULL) / 65536ULL));
-  Serial.printf("Valor Teorico:     %.4f\n", theoretical);
-  Serial.printf("Error Absoluto:    %.6f\n", fabs(fpga_real - theoretical));
 }
 
 void loop() {
-  uint32_t test_values[] = {10, 50, 85, 144};
-  
-  for (int i = 0; i < 4; i++) {
-    send_and_receive(test_values[i]);
-    delay(2000);
-  }
+  // 1. Esperar solicitud de MATLAB (6 bytes comenzando con 0xAA)
+  if (Serial.available() > 0) {
+    // Sincronizar con la cabecera 0xAA enviada por MATLAB
+    uint8_t b = Serial.read();
+    if (b == HEADER) {
+      uint8_t tx_frame[MATLAB_FRAME_LEN];
+      tx_frame[0] = HEADER;
 
-  Serial.println("\nCiclo de pruebas completado. Esperando 10 segundos...\n");
-  delay(10000);
+      // Leer los 5 bytes restantes (4 de 'n' + 1 de footer 0x55)
+      size_t count = Serial.readBytes(&tx_frame[1], MATLAB_FRAME_LEN - 1);
+
+      if (count == (MATLAB_FRAME_LEN - 1) && tx_frame[5] == FOOTER) {
+        // Limpiar cualquier basura previa en el receptor de la FPGA
+        while (Serial2.available()) Serial2.read();
+
+        // Enviar la trama de 6 bytes integra hacia la FPGA
+        Serial2.write(tx_frame, MATLAB_FRAME_LEN);
+        digitalWrite(LED_PIN, HIGH); // Encender LED: esperando respuesta de FPGA
+
+        // 2. Esperar los 14 bytes de respuesta de la FPGA (timeout de 1000 ms)
+        unsigned long t_start = millis();
+        bool header_found = false;
+
+        while (millis() - t_start < 1000) {
+          if (Serial2.available() > 0) {
+            uint8_t fpga_byte = Serial2.read();
+            if (fpga_byte == HEADER) {
+              header_found = true;
+              break;
+            }
+          }
+        }
+
+        if (header_found) {
+          uint8_t rx_frame[FPGA_FRAME_LEN];
+          rx_frame[0] = HEADER;
+
+          // Leer los 13 bytes restantes (12 de payload Q80.16 + 1 de footer 0x55)
+          size_t fpga_count = Serial2.readBytes(&rx_frame[1], FPGA_FRAME_LEN - 1);
+
+          if (fpga_count == (FPGA_FRAME_LEN - 1)) {
+            // Reenviar los 14 bytes binarios crudos directamente a MATLAB
+            Serial.write(rx_frame, FPGA_FRAME_LEN);
+          }
+        }
+
+        digitalWrite(LED_PIN, LOW); // Apagar LED: transaccion terminada
+      }
+    }
+  }
 }
