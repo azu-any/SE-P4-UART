@@ -4,7 +4,7 @@
 clear
 clc
 
-PORT = "COM3";     % Cambiar por el puerto correspondiente a la FPGA / puente USB-UART
+PORT = "COM3";     % Cambiar por el puerto correspondiente a la FPGA / USB-UART
 BAUD = 9600;
 
 HEADER = uint8(hex2dec('AA'));
@@ -12,7 +12,7 @@ FOOTER = uint8(hex2dec('55'));
 BYTES_PAYLOAD = 12;
 
 s = serialport(PORT, BAUD, "Timeout", 2.0);
-pause(2);
+pause(1.5);
 flush(s);
 
 disp("Comunicacion bidireccional iniciada");
@@ -34,9 +34,14 @@ while true
     write(s, trama_tx, "uint8");
     disp(['Enviado: ', num2str(valor)]);
 
-    pause(0.2);
+    % 2. Reemplazo del pause(0.2): Espera activa hasta recibir los 14 bytes minimos
+    t_inicio = tic;
+    tiempo_limite = 1.0; % Timeout de 1 segundo
+    while s.NumBytesAvailable < 14 && toc(t_inicio) < tiempo_limite
+        pause(0.002); % Pausa minima de 2 ms para no saturar la CPU
+    end
 
-    % 2. Verificar si llegaron bytes (se esperan al menos 14: 1 header + 12 payload + 1 footer)
+    % 3. Procesar datos recibidos
     if s.NumBytesAvailable >= 14
         % Buscar sincronizacion con el delimitador 0xAA
         rx_header = read(s, 1, "uint8");
@@ -68,7 +73,7 @@ while true
             disp('Error: No se encontro el delimitador 0xAA.');
         end
     else
-        disp('No se recibio respuesta completa de la FPGA');
+        disp('Error: Tiempo de espera agotado (Timeout), no se recibieron los 14 bytes.');
     end
 
     disp('--------------------------------------------');
