@@ -1,5 +1,3 @@
-`timescale 1ns / 1ps
-
 module top_uart_de10lite #(
     parameter CLK_FREQ  = 50000000,
     parameter BAUD_RATE = 9600
@@ -159,4 +157,35 @@ module top_uart_de10lite #(
                     if (!tx_busy && !tx_start) begin
                         tx_data  <= pn_result[index +: 8];
                         tx_start <= 1'b1; 
-                        state    <= S_WAIT_
+                        state    <= S_WAIT_TX;   
+                    end                                                                                                  
+                end         
+                
+                // 7. Esperar salida del byte y comprobar si se transmitieron los 12 bytes
+                S_WAIT_TX: begin 
+                    if (!tx_busy && !tx_start) begin
+                        if (index < 10'd88) begin // Indices: 0, 8, 16, ..., 88 (12 bytes en total)
+                            index <= index + 10'd8; 
+                            state <= S_PROCESS;
+                        end else begin
+                            state <= S_SEND_FOOTER;
+                        end
+                    end
+                end     
+                
+                // 8. Enviar delimitador final 0x55
+                S_SEND_FOOTER: begin    
+                    if (!tx_busy && !tx_start) begin
+                        tx_data  <= 8'h55;
+                        tx_start <= 1'b1; 
+                        state    <= S_IDLE; // Vuelve a reposo para la siguiente solicitud
+                    end 
+                end
+                
+                default: state <= S_IDLE;
+                
+            endcase 
+        end
+    end
+
+endmodule
