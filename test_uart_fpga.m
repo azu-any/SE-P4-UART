@@ -8,10 +8,7 @@ clear
 clc
 
 % 1. Configuracion del puerto serial
-% En Windows: "COM3", "COM4", etc.
-% En macOS:   "/dev/cu.SLAB_USBtoUART" o "/dev/cu.usbserial-xxxx"
-%            (Puedes ver los puertos disponibles ejecutando: serialportlist("available"))
-PORT = "COM3";     
+PORT = "COM8";     
 BAUD = 9600;       % Debe coincidir exactamente con Serial.begin(9600) del ESP32
 
 HEADER        = uint8(hex2dec('AA'));
@@ -26,11 +23,11 @@ flush(s);   % Limpiar mensajes del bootloader del ESP32
 
 disp("==========================================================");
 disp(" Comunicacion bidireccional iniciada (MATLAB <-> ESP32 <-> FPGA)");
-disp(" Calculando f(n) = n^(5/2) en formato punto fijo Q80.16");
+disp(" Calculando f(n) = n^(p/2) en formato punto fijo Q80.16");
 disp("==========================================================");
 
 while true
-    valor = input('\nIngrese un numero entero n >= 0 (o negativo para salir): ');
+    valor = input('\nIngrese la base entera n >= 0 (o negativo para salir): ');
 
     if isempty(valor)
         continue;
@@ -41,10 +38,18 @@ while true
         break;
     end
 
+    exponente = input("Ingrese el exponente entero p >= 0 (para calcular n^(p/2)): ");
+
+    if exponente < 0 || isempty(exponente)
+        disp('Error leyendo exponente intente de nuevo.');
+        continue;
+    end
+
     % 3. Empaquetar n en 4 bytes (Little-Endian) y armar la trama de 6 bytes
     n_uint32 = uint32(floor(valor));
+    p_uint8 = uint8(floor(exponente));
     n_bytes  = typecast(n_uint32, 'uint8'); % [LSB, b1, b2, MSB]
-    trama_tx = [HEADER, n_bytes, FOOTER];
+    trama_tx = [HEADER, n_bytes, p_uint8, FOOTER];
 
     % Limpiar buffer de entrada antes de enviar nueva solicitud
     flush(s);
@@ -105,7 +110,8 @@ while true
 
                 % Calculo teorico en doble precision
                 n_double = double(n_uint32);
-                teorico  = (n_double ^ 2) * sqrt(n_double);
+                p_double = double(p_uint8);
+                teorico  = n_double ^ (p_double / 2.0);
                 error_abs = abs(resultado_fpga - teorico);
 
                 disp('----------------------------------------------------------');
