@@ -7,7 +7,7 @@
 const uint8_t HEADER = 0xAA;
 const uint8_t FOOTER = 0x55;
 
-const size_t MATLAB_FRAME_LEN = 6;  // [0xAA, n0, n1, n2, n3, 0x55]
+const size_t MATLAB_FRAME_LEN = 7;  // [0xAA, n0, n1, n2, n3, 0x55]
 const size_t FPGA_FRAME_LEN   = 14; // [0xAA, b0..b11 (Q80.16), 0x55]
 
 void setup() {
@@ -36,7 +36,7 @@ void loop() {
       // Leer los 5 bytes restantes (4 de 'n' + 1 de footer 0x55)
       size_t count = Serial.readBytes(&tx_frame[1], MATLAB_FRAME_LEN - 1);
 
-      if (count == (MATLAB_FRAME_LEN - 1) && tx_frame[5] == FOOTER) {
+      if (count == (MATLAB_FRAME_LEN - 1) && tx_frame[6] == FOOTER) {
         // Limpiar cualquier basura previa en el receptor de la FPGA
         while (Serial2.available()) Serial2.read();
 
