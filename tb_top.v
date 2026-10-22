@@ -2,15 +2,15 @@
 
 module tb_top_uart_de10lite;
 
-    // Par醡etros de simulaci髇
-    // Se puede usar 2500000 para acelerar la simulaci髇 en ModelSim, o 9600 para prueba est醤dar
+    // Par谩metros de simulaci贸n
+    // Se puede usar 2500000 para acelerar la simulaci贸n en ModelSim, o 9600 para prueba est谩ndar
     localparam CLK_FREQ     = 50000000;
-    localparam BAUD_RATE    = 9600;                       // 2.5 Mbaud para acelerar simulaci髇
+    localparam BAUD_RATE    = 9600;                       // 2.5 Mbaud para acelerar simulaci贸n
     localparam CLK_PERIOD   = 20;                            // 20 ns = 50 MHz
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;          // 20 ciclos por bit
     localparam BIT_PERIOD   = CLKS_PER_BIT * CLK_PERIOD;     // 400 ns por bit
 
-    // Se馻les DUT
+    // Se帽ales DUT
     reg  CLOCK_50;
     reg  RESET_N;
     reg  UART_RX;
@@ -21,12 +21,12 @@ module tb_top_uart_de10lite;
     reg [7:0]   rx_header;
     reg [7:0]   rx_footer;
 
-    // Variables de decodificaci髇 en punto flotante
+    // Variables de decodificaci贸n en punto flotante
     real real_result;
     real expected_result;
     real abs_error;
 
-    // Instancia del m骴ulo principal
+    // Instancia del m贸dulo principal
     top_uart_de10lite #(
         .CLK_FREQ(CLK_FREQ),
         .BAUD_RATE(BAUD_RATE)
@@ -60,24 +60,16 @@ module tb_top_uart_de10lite;
         end
     endtask
 
-    // 3. Tarea para enviar trama con n de 32 bits (4 bytes little-endian)
-    task send_uart_frame_32bit(input [31:0] n_val);
+    // 3. Tarea para enviar trama con n de 32 bits + 8 bits de p (4 bytes little-endian)
+    task send_uart_frame_np(input [31:0] n_val, input [7:0] p_val);
         begin
-            $display("\n[%0t ns] === Enviando trama UART: n = %0d ===", $time, n_val);
-
-            // Delimitador de inicio
-            send_uart_byte(8'hAA);
-
-            // Carga 鷗il de 4 bytes (LSB primero)
-            send_uart_byte(n_val[7:0]);
-            send_uart_byte(n_val[15:8]);
-            send_uart_byte(n_val[23:16]);
-            send_uart_byte(n_val[31:24]);
-
-            // Delimitador de fin
-            send_uart_byte(8'h55);
-
-            $display("[%0t ns] === Trama enviada hacia FPGA ===", $time);
+            send_uart_byte(8'hAA);          // Header
+            send_uart_byte(n_val[7:0]);     // n Byte 0 (LSB)
+            send_uart_byte(n_val[15:8]);    // n Byte 1
+            send_uart_byte(n_val[23:16]);   // n Byte 2
+            send_uart_byte(n_val[31:24]);   // n Byte 3 (MSB)
+            send_uart_byte(p_val);          // Byte 4: exponente p
+            send_uart_byte(8'h55);          // Footer
         end
     endtask
 
@@ -127,9 +119,9 @@ module tb_top_uart_de10lite;
             int_part  = rx_payload_captured[63:16]; // Bits superiores a 16
             frac_part = rx_payload_captured[15:0];  // 16 bits fraccionarios
 
-            // Conversi髇 a valor real dividiendo entre 2^16 (65536.0)
+            // Conversi贸n a valor real dividiendo entre 2^16 (65536.0)
             real_result     = rx_payload_captured[63:0] / 65536.0;
-            expected_result = (n_val * n_val) * $sqrt(n_val);
+            expected_result = (1.0 * n_val) ** (p_val / 2.0);
             abs_error       = real_result - expected_result;
             if (abs_error < 0.0) abs_error = -abs_error;
 
