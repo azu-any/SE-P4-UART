@@ -188,4 +188,13 @@ module top_uart_de10lite #(
         end
     end
 
+    // Diagnostico visual en la placa:
+    assign LEDR[2:0] = state;       // Muestra el estado actual de la FSM (0 a 7 en binario)
+    assign LEDR[3]   = rx_done;     // Destello cuando recibe cualquier byte
+    assign LEDR[4]   = pn_start;    // Se enciende si valido la trama y disparo el calculo
+    assign LEDR[5]   = pn_done;     // Se enciende si el calculo matematico finalizo
+    assign LEDR[6]   = tx_busy;     // Se enciende mientras la FPGA transmite
+    assign LEDR[7]   = reset;       // Debe estar APAGADO (si esta encendido, esta reseteada)
+    assign LEDR[9:8] = 2'b00;
+
 endmodule
