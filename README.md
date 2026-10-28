@@ -380,8 +380,8 @@ Para la síntesis en Intel Quartus Prime, se utilizan las siguientes asignacione
 |---|---|---|---|
 | `CLOCK_50` | Input (3.3V LVTTL) | `PIN_P11` | Oscilador de reloj de 50 MHz del sistema |
 | `RESET_N` | Input (3.3V LVTTL) | `PIN_B8` | Pulsador activo en bajo `KEY[0]` |
-| `UART_RX` | Input (3.3V LVTTL) | `PIN_V10` o `PIN_AB5` | GPIO [0] o Arduino Header IO[0] |
-| `UART_TX` | Output (3.3V LVTTL) | `PIN_W10` o `PIN_AB6` | GPIO [1] o Arduino Header IO[1] |
+| `UART_RX` | Input (3.3V LVTTL) | `PIN_V10` | GPIO [0] |
+| `UART_TX` | Output (3.3V LVTTL) | `PIN_W10` | GPIO [1] |
 
 > [!IMPORTANT]
 > Los pines del conector de expansión GPIO y de la cabecera Arduino en la tarjeta DE10-Lite operan a **3.3V LVTTL**. Dado que el ESP32 opera de forma nativa a 3.3V en sus líneas lógicas, la conexión directa de los pines TX/RX entre ambas tarjetas es totalmente segura.
