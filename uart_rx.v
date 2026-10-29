@@ -13,7 +13,7 @@ module uart_rx #(
 	localparam integer HALF_BIT     = CLKS_PER_BIT / 2;	  
 	
 	
-	// Codificación de estados 
+	// CodificaciÃ³n de estados 
 	// Mayor control sobre el receptor
 	localparam [1:0] S_IDLE      = 2'b00, // Espera informacion
 		             S_START_BIT = 2'b01, // Confirma que el bit de inicio sea recibido
