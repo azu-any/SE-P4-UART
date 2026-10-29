@@ -19,9 +19,14 @@ module process_number (
     reg        p_is_odd;     // Guarda p_in[0] (1 si p es impar, 0 si p es par)
 
     reg         sqrt_start;
-    wire [31:0] sqrt_res;    // Raíz cuadrada en Q16.16
-    wire        sqrt_done;
-    reg         sqrt_ready;  // Bandera que recuerda si sqrt_root ya terminó
+    wire [31:0]  sqrt_res;    // Raíz cuadrada en Q16.16
+    wire         sqrt_done;
+    reg          sqrt_ready;  // Bandera que recuerda si square_root ya terminó
+
+    // Producto explícitamente extendido a 112 bits (80 + 32), para que
+    // Verilog no reduzca accidentalmente el ancho de pow_acc * sqrt_res.
+    wire [111:0] product_wide;
+    assign product_wide = {{32{1'b0}}, pow_acc} * {{80{1'b0}}, sqrt_res};
 
     // Instanciación del módulo square_root (sin cambios)
     square_root u_sqrt (
@@ -79,8 +84,10 @@ module process_number (
                     if (data_in == 32'd0 && (p_in != 8'd0)) begin
                         data_out <= 96'd0;                 // 0 elevado a cualquier p > 0 es 0
                     end else if (p_is_odd) begin
-                        // Si p es impar: (Entero 80b) * (Q16.16 32b) -> truncado a Q80.16 (96b)
-                        data_out <= pow_acc * sqrt_res;
+                        // pow_acc es entero y sqrt_res esta en Q16.16.
+                        // El producto raw se calcula a 112 bits; Q80.16 conserva
+                        // los 96 bits inferiores. El usuario debe evitar overflow.
+                        data_out <= product_wide[95:0];
                     end else begin
                         // Si p es par: desplazar 16 bits a la izquierda para formato Q80.16
                         data_out <= {pow_acc, 16'd0};
