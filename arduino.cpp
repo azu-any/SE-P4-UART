@@ -7,7 +7,7 @@
 const uint8_t HEADER = 0xAA;
 const uint8_t FOOTER = 0x55;
 
-const size_t MATLAB_FRAME_LEN = 7;  // [0xAA, n0, n1, n2, n3, 0x55]
+const size_t MATLAB_FRAME_LEN = 7;  // [0xAA, n0, n1, n2, n3, p, 0x55]
 const size_t FPGA_FRAME_LEN   = 14; // [0xAA, b0..b11 (Q80.16), 0x55]
 
 void setup() {
@@ -25,7 +25,7 @@ void setup() {
 }
 
 void loop() {
-  // 1. Esperar solicitud de MATLAB (6 bytes comenzando con 0xAA)
+  // 1. Esperar solicitud de MATLAB (7 bytes: cabecera + n + p + footer)
   if (Serial.available() > 0) {
     // Sincronizar con la cabecera 0xAA enviada por MATLAB
     uint8_t b = Serial.read();
@@ -33,14 +33,14 @@ void loop() {
       uint8_t tx_frame[MATLAB_FRAME_LEN];
       tx_frame[0] = HEADER;
 
-      // Leer los 5 bytes restantes (4 de 'n' + 1 de footer 0x55)
+      // Leer los 6 bytes restantes (4 de n + 1 de p + 1 de footer 0x55)
       size_t count = Serial.readBytes(&tx_frame[1], MATLAB_FRAME_LEN - 1);
 
       if (count == (MATLAB_FRAME_LEN - 1) && tx_frame[6] == FOOTER) {
         // Limpiar cualquier basura previa en el receptor de la FPGA
         while (Serial2.available()) Serial2.read();
 
-        // Enviar la trama de 6 bytes integra hacia la FPGA
+        // Reenviar la trama completa de 7 bytes hacia la FPGA
         Serial2.write(tx_frame, MATLAB_FRAME_LEN);
         digitalWrite(LED_PIN, HIGH); // Encender LED: esperando respuesta de FPGA
 
