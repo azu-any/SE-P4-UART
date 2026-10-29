@@ -15,7 +15,7 @@ module square_root (
     reg [4:0]  iter;     // Cuenta de 31 hacia 0 (32 iteraciones en total)
     reg [63:0] rem_data; // Entrada extendida: 32 bits enteros + 32 ceros a la derecha
     reg [33:0] r;        // Residuo acumulado (34 bits para desplazamiento y prueba)
-    reg [31:0] q;        // Raíz acumulada (32 bits en Q16.16)
+    reg [31:0] q;        // RaÃ­z acumulada (32 bits en Q16.16)
 
     wire [33:0] r_next;
     wire [33:0] test_val;
@@ -41,7 +41,7 @@ module square_root (
             case (state)
                 S_IDLE: begin
                     if (start) begin
-                        // Se colocan 32 ceros a la derecha para obtener 16 bits de fracción
+                        // Se colocan 32 ceros a la derecha para obtener 16 bits de fracciÃ³n
                         rem_data <= {data_in, 32'd0};
                         r        <= 34'd0;
                         q        <= 32'd0;
@@ -51,7 +51,7 @@ module square_root (
                 end
 
                 S_CALC: begin
-                    // Evaluar sustracción
+                    // Evaluar sustracciÃ³n
                     if (r_next >= test_val) begin
                         r <= r_next - test_val;
                         q <= {q[30:0], 1'b1};
