@@ -72,13 +72,16 @@ Para optimizar el uso de recursos y latencia en la FPGA, el exponente $p$ de 8 b
 2. **Componente fraccionario (raíz cuadrada):** Determinado por el bit menos significativo $p \pmod 2 = p[0]$ (`p_is_odd`):
    - **Si $p$ es par (`p_is_odd == 0`):** El resultado es un entero puro $n^{p/2}$. No requiere multiplicación con la raíz; el acumulador entero `pow_acc` se alinea a la izquierda insertando 16 ceros en los bits fraccionarios:
      $$\text{data\_out} = \{\text{pow\_acc}[79:0], \, 16'd0\}$$
-   - **Si $p$ es impar (`p_is_odd == 1`):** El resultado requiere el factor fraccionario $\sqrt{n}$. Se realiza la multiplicación de 80 bits enteros por 32 bits en formato Q16.16:
-     $$\text{data\_out} = \text{pow\_acc}[79:0] \times \text{sqrt\_res}[31:0]$$
-3. **Ejecución Concurrente:** El módulo [`process_number`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/process_number.v) dispara el cálculo de raíz cuadrada en el módulo [`square_root`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/square_root.v) en paralelo con las multiplicaciones de potencia entera, minimizando la latencia total.
-4. **Manejo de Casos Límite:**
+   - **Si $p$ es impar (`p_is_odd == 1`):** El resultado requiere el factor fraccionario $\sqrt{n}$. Para evitar truncamientos accidentales de ancho por parte del sintetizador de Verilog, el diseño implementa un multiplicador extendido explícitamente a 112 bits ($80 + 32$ bits):
+     $$\text{product\_wide}[111:0] = \{\{32\{1'b0\}\}, \, \text{pow\_acc}\} \times \{\{80\{1'b0\}\}, \, \text{sqrt\_res}\}$$
+     Conservando en la salida los 96 bits inferiores correspondientes al formato **Q80.16**:
+     $$\text{data\_out}[95:0] = \text{product\_wide}[95:0]$$
+3. **Ejecución Concurrente:** El módulo [`process_number`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/process_number.v) dispara el cálculo de raíz cuadrada en el módulo [`square_root`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/square_root.v) en paralelo con las multiplicaciones de potencia entera. Una bandera interna `sqrt_ready` recuerda la finalización de la raíz en caso de que termine antes de concluir las iteraciones de la potencia entera (o viceversa), sincronizando ambas ramas aritméticas.
+4. **Manejo de Casos Límite y Protección de Rango:**
    - Si $n = 0$ y $p > 0$, el módulo entrega de inmediato `data_out = 96'd0`.
    - Si $p = 0$, $n^0 = 1$ en formato Q80.16 (`0x00000000000000010000`).
    - Para el caso clásico de la práctica ($p = 5$), el sistema evalúa $n^{5/2} = n^2 \cdot \sqrt{n}$.
+   - Rango dinámico: la parte entera admite valores hasta $2^{80}-1 \approx 1.2089 \times 10^{24}$. En MATLAB se valida que $n^{p/2} < 2^{80}$ antes de la transmisión para prevenir desbordamientos.
 
 ### 2.2 Representación en Punto Fijo (Q80.16)
 El resultado final consta de 96 bits organizados de la siguiente forma:
@@ -140,12 +143,13 @@ El módulo [`top_uart_de10lite`](file:///Users/Azu/Desktop/School/UDLAP/9o/Siste
 stateDiagram-v2
     [*] --> S_IDLE
     
-    S_IDLE --> S_RECEIVE: rx_done && rx_data == 0xAA\n[complete_data <= 0, index <= 0]
+    S_IDLE --> S_RECEIVE: rx_done && rx_data == 0xAA\n[complete_data <= 0, exponent_p <= 0, index <= 0]
     S_IDLE --> S_IDLE: rx_done && rx_data != 0xAA
     
     S_RECEIVE --> S_RECEIVE: rx_done && index < 32\n[complete_data[index +: 8] <= rx_data, index <= index + 8]
-    S_RECEIVE --> S_WAIT_MATH: rx_done && index >= 32 && rx_data == 0x55\n[pn_start <= 1, index <= 0]
-    S_RECEIVE --> S_IDLE: rx_done && index >= 32 && rx_data != 0x55\n(Trama inválida: abortar)
+    S_RECEIVE --> S_RECEIVE: rx_done && index == 32\n[exponent_p <= rx_data, index <= 40]
+    S_RECEIVE --> S_WAIT_MATH: rx_done && index > 32 && rx_data == 0x55\n[pn_start <= 1, index <= 0]
+    S_RECEIVE --> S_IDLE: rx_done && index > 32 && rx_data != 0x55\n(Trama inválida: abortar)
     
     S_WAIT_MATH --> S_SEND_HEADER: pn_done == 1\n[index <= 0]
     S_WAIT_MATH --> S_WAIT_MATH: pn_done == 0
@@ -166,8 +170,8 @@ stateDiagram-v2
 
 | Estado | Código | Función / Comportamiento |
 |---|---|---|
-| `S_IDLE` | `3'b000` | Modo de espera. Al recibir el byte delimitador `0xAA` vía `rx_done`, reinicia el índice y el búfer de entrada, transicionando a `S_RECEIVE`. |
-| `S_RECEIVE` | `3'b001` | Acumula bytes de datos de forma indexada (`index +: 8`). Al capturar los datos requeridos, valida el byte de cierre `0x55`. Si es correcto, emite el pulso `pn_start <= 1` y avanza a `S_WAIT_MATH`; en caso contrario, descarta la trama regresando a `S_IDLE`. |
+| `S_IDLE` | `3'b000` | Modo de espera. Al recibir el byte delimitador `0xAA` vía `rx_done`, reinicia el índice `index <= 0`, limpia `complete_data <= 0` y `exponent_p <= 0`, transicionando a `S_RECEIVE`. |
+| `S_RECEIVE` | `3'b001` | **Recepción de trama de 7 bytes:** Si `index < 32`, acumula los 4 bytes de la base $n$ (`complete_data[index +: 8]`). Al alcanzar `index == 32`, captura el 5to byte en `exponent_p` y avanza a `index <= 40`. En el siguiente ciclo de recepción (`index == 40`), valida que el byte de cierre sea `0x55`. Si es correcto, activa `pn_start <= 1` y avanza a `S_WAIT_MATH`; si no es `0x55`, descarta la trama por malformación y regresa a `S_IDLE`. |
 | `S_WAIT_MATH` | `3'b010` | Espera el pulso de finalización `pn_done` del coprocesador `process_number`. Al detectarlo, reinicia `index <= 0` y avanza a `S_SEND_HEADER`. |
 | `S_SEND_HEADER` | `3'b011` | Cuando el transmisor UART está disponible (`!tx_busy`), carga `0xAA` en `tx_data`, pulsa `tx_start <= 1` y avanza a `S_PROCESS`. |
 | `S_PROCESS` | `3'b100` | Carga el byte correspondiente `pn_result[index +: 8]` en `tx_data`, pulsa `tx_start <= 1` y pasa a `S_WAIT_TX`. |
@@ -194,7 +198,7 @@ stateDiagram-v2
     S_CALC --> S_MULT: exp_cnt == 0 && (sqrt_ready || sqrt_done)
     
     S_MULT --> S_DONE: data_in == 0 && p_in != 0\n[data_out <= 0]
-    S_MULT --> S_DONE: p_is_odd == 1\n[data_out <= pow_acc * sqrt_res (Q80.16)]
+    S_MULT --> S_DONE: p_is_odd == 1\n[data_out <= product_wide[95:0] (Q80.16)]
     S_MULT --> S_DONE: p_is_odd == 0\n[data_out <= {pow_acc, 16'd0} (Q80.16)]
     
     S_DONE --> S_IDLE: done <= 1
@@ -204,9 +208,9 @@ stateDiagram-v2
 
 | Estado | Código | Función / Comportamiento |
 |---|---|---|
-| `S_IDLE` | `2'b00` | Reposo. Al recibir `start`: inicializa `pow_acc <= 80'd1`, extrae el conteo de multiplicaciones enteras `exp_cnt <= p_in[7:1]`, almacena la bandera de paridad `p_is_odd <= p_in[0]`, dispara la raíz cuadrada concurrente `sqrt_start <= 1` y pasa a `S_CALC`. |
-| `S_CALC` | `2'b01` | **Cálculo concurrente:** Si `exp_cnt > 0`, multiplica en cada ciclo `pow_acc <= pow_acc * data_in` y decrementa `exp_cnt`. Simultáneamente, monitorea la señal `sqrt_done` del módulo de raíz cuadrada registrándola en `sqrt_ready`. Cuando **ambos** procesos terminan (`exp_cnt == 0` y `sqrt_ready \|\| sqrt_done`), transiciona a `S_MULT`. |
-| `S_MULT` | `2'b10` | **Resolución del formato final:** Si $n = 0$ ($p > 0$), asigna `data_out <= 0`. Si $p$ es impar, multiplica el acumulador entero de 80 bits por el resultado de raíz Q16.16 de 32 bits (`pow_acc * sqrt_res`). Si $p$ es par, alinea el entero a Q80.16 desplazándolo 16 bits (`{pow_acc, 16'd0}`). Avanza a `S_DONE`. |
+| `S_IDLE` | `2'b00` | Reposo. Al recibir `start`: inicializa `pow_acc <= 80'd1`, extrae el conteo de multiplicaciones enteras `exp_cnt <= p_in[7:1]`, almacena la bandera de paridad `p_is_odd <= p_in[0]`, dispara la raíz cuadrada concurrente `sqrt_start <= 1`, limpia `sqrt_ready <= 0` y pasa a `S_CALC`. |
+| `S_CALC` | `2'b01` | **Cálculo concurrente:** Si `exp_cnt > 0`, multiplica en cada ciclo `pow_acc <= pow_acc * data_in` y decrementa `exp_cnt`. Simultáneamente, monitorea la señal `sqrt_done` del módulo de raíz cuadrada registrándola en la bandera `sqrt_ready`. Cuando **ambos** procesos terminan (`exp_cnt == 0` y `sqrt_ready \|\| sqrt_done`), transiciona a `S_MULT`. |
+| `S_MULT` | `2'b10` | **Resolución del formato final:** Si $n = 0$ ($p > 0$), asigna `data_out <= 0`. Si $p$ es impar, utiliza el multiplicador de precisión extendida a 112 bits (`product_wide = {{32{1'b0}}, pow_acc} * {{80{1'b0}}, sqrt_res}`) y asigna `data_out <= product_wide[95:0]` preservando el formato Q80.16 sin truncamientos. Si $p$ es par, alinea el entero a Q80.16 desplazándolo 16 bits (`{pow_acc, 16'd0}`). Avanza a `S_DONE`. |
 | `S_DONE` | `2'b11` | Genera un pulso activo en alto de un ciclo de reloj en `done <= 1` y retorna a `S_IDLE`. |
 
 ---
@@ -364,11 +368,19 @@ El microcontrolador ESP32 actúa como un puente bidireccional transparente:
 ### 6.4 Consola Interactiva en MATLAB (`test_uart_fpga.m`)
 
 El script interactivo [`test_uart_fpga.m`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/test_uart_fpga.m) permite evaluar el hardware en tiempo real:
-1. Abre la conexión serial en el puerto configurado (ej. `COM8` en Windows o `/dev/ttyUSB0` en Linux/macOS) a 9600 baudios.
-2. Solicita interactivamente la base $n \ge 0$ y el exponente $p \ge 0$ (o un valor negativo para salir).
-3. Construye y transmite la trama de 7 bytes `[0xAA, n[7:0], n[15:8], n[23:16], n[31:24], p[7:0], 0x55]`.
-4. Implementa una máquina de recepción con sincronización por cabecera `0xAA`, descarte de basura previa y timeout de 1.5 s.
-5. Valida el delimitador final `0x55`, desempaqueta los 12 bytes del resultado Q80.16 y calcula el error absoluto respecto al cálculo teórico `double(n) ^ (double(p) / 2.0)`.
+1. **Configuración del Puerto:** Abre la conexión serial en el puerto configurado (`PORT = "COM3"` por defecto en Windows o `/dev/ttyUSB0` / `/dev/cu.usbserial-*` en Linux/macOS) a 9600 baudios, aguardando 2.5 s para el arranque limpio del ESP32 y purgando residuos del búfer (`flush`).
+2. **Validación de Entradas del Usuario:**
+   - Solicita la base $n \ge 0$ (número entero finito en el rango $[0, \, 2^{32}-1]$, o valor negativo para finalizar).
+   - Solicita el numerador $p$ con denominador fijo en 2 ($p/2$), validando que sea un entero estricto entre 1 y 255.
+3. **Protección Previa contra Desbordamiento (Overflow Guard):** Calcula previamente el valor teórico $n^{p/2}$ y verifica que no exceda la capacidad entera de 80 bits del formato Q80.16 ($n^{p/2} < 2^{80}$); si excede, alerta al usuario antes de transmitir y solicita nuevos operandos.
+4. **Construcción y Transmisión de Trama:** Empaqueta $n$ en 4 bytes Little-Endian, anexa $p$ y envía la trama de 7 bytes: `[0xAA, n[7:0], n[15:8], n[23:16], n[31:24], p[7:0], 0x55]`.
+5. **Máquina de Recepción Robusta:**
+   - Sincroniza buscando el delimitador de cabecera `0xAA` descartando cualquier byte espurio previo, bajo una ventana de timeout de 1.5 s.
+   - Aguarda y lee los 13 bytes restantes (12 bytes de payload en Q80.16 + 1 byte de footer `0x55`).
+6. **Decodificación y Métricas de Precisión:**
+   - Reconstruye el número de 96 bits ponderando los bytes en Little-Endian.
+   - Extrae la parte fraccionaria (`frac_raw / 65536.0`) y la parte entera (`int_part`).
+   - Compara con el valor teórico en doble precisión de MATLAB `n_double ^ (double(p_byte) / 2.0)` y reporta en consola con 6 dígitos decimales el resultado FPGA, valor analítico y error absoluto.
 
 ---
 
