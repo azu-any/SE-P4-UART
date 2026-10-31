@@ -1,7 +1,7 @@
 # Práctica 4: Coprocesador Matemático FPGA $n^{p/2}$ con Interfaz UART y Pasarela ESP32
 
 **Institución:** Universidad de las Américas Puebla (UDLAP)  
-**Curso:** Sistemas Embebidos (9º Semestre) — Parcial 3  
+**Curso:** Sistemas Embebidos
 **Plataforma Hardware:** Tarjeta FPGA Terasic DE10-Lite (Intel MAX 10 `10M50DAF484C7G`)  
 **Microcontrolador Intermedio:** Espressif ESP32 (Puente transparente USB-UART con LED de diagnóstico)  
 **Consola de Usuario:** MATLAB R2020a+ (`test_uart_fpga.m`)  
@@ -71,11 +71,11 @@ Para optimizar el uso de recursos y latencia en la FPGA, el exponente $p$ de 8 b
 1. **Parte entera del exponente:** $\lfloor p / 2 \rfloor = p \gg 1$ (bits `p_in[7:1]`). Determina cuántas veces consecutivas se multiplica la base $n$ por el acumulador entero `pow_acc` (80 bits).
 2. **Componente fraccionario (raíz cuadrada):** Determinado por el bit menos significativo $p \pmod 2 = p[0]$ (`p_is_odd`):
    - **Si $p$ es par (`p_is_odd == 0`):** El resultado es un entero puro $n^{p/2}$. No requiere multiplicación con la raíz; el acumulador entero `pow_acc` se alinea a la izquierda insertando 16 ceros en los bits fraccionarios:
-     $$\text{data\_out} = \{\text{pow\_acc}[79:0], \, 16'd0\}$$
+     $$\text{data\\_out} = \{\text{pow\\_acc}[79:0], \, 16'd0\}$$
    - **Si $p$ es impar (`p_is_odd == 1`):** El resultado requiere el factor fraccionario $\sqrt{n}$. Para evitar truncamientos accidentales de ancho por parte del sintetizador de Verilog, el diseño implementa un multiplicador extendido explícitamente a 112 bits ($80 + 32$ bits):
-     $$\text{product\_wide}[111:0] = \{\{32\{1'b0\}\}, \, \text{pow\_acc}\} \times \{\{80\{1'b0\}\}, \, \text{sqrt\_res}\}$$
+     $$\text{product\\_wide}[111:0] = \{\{32\{1'b0\}\}, \, \text{pow\\_acc}\} \times \{\{80\{1'b0\}\}, \, \text{sqrt\\_res}\}$$
      Conservando en la salida los 96 bits inferiores correspondientes al formato **Q80.16**:
-     $$\text{data\_out}[95:0] = \text{product\_wide}[95:0]$$
+     $$\text{data\\_out}[95:0] = \text{product\\_wide}[95:0]$$
 3. **Ejecución Concurrente:** El módulo [`process_number`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/process_number.v) dispara el cálculo de raíz cuadrada en el módulo [`square_root`](file:///Users/Azu/Desktop/School/UDLAP/9o/Sistemas%20Embebidos/Parcial3/Practica4/square_root.v) en paralelo con las multiplicaciones de potencia entera. Una bandera interna `sqrt_ready` recuerda la finalización de la raíz en caso de que termine antes de concluir las iteraciones de la potencia entera (o viceversa), sincronizando ambas ramas aritméticas.
 4. **Manejo de Casos Límite y Protección de Rango:**
    - Si $n = 0$ y $p > 0$, el módulo entrega de inmediato `data_out = 96'd0`.
@@ -92,7 +92,7 @@ El resultado final consta de 96 bits organizados de la siguiente forma:
 | `[15:0]` | 16 bits | Fraccionario | Representa la parte decimal $\frac{\text{valor}}{2^{16}} = \frac{\text{valor}}{65536}$ (resolución $\approx 1.5258 \times 10^{-5}$) |
 
 Para obtener el valor decimal en software:
-$$\text{Valor Decimal} = \frac{\text{data\_out}[95:0]}{65536.0}$$
+$$\text{Valor Decimal} = \frac{\text{data\\_out}[95:0]}{65536.0}$$
 
 ---
 
