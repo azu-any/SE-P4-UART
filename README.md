@@ -397,3 +397,95 @@ Para la síntesis en Intel Quartus Prime, se utilizan las siguientes asignacione
 
 > [!IMPORTANT]
 > Los pines del conector de expansión GPIO y de la cabecera Arduino en la tarjeta DE10-Lite operan a **3.3V LVTTL**. Dado que el ESP32 opera de forma nativa a 3.3V en sus líneas lógicas, la conexión directa de los pines TX/RX entre ambas tarjetas es totalmente segura.
+
+## 8. Instalación y ejecución del proyecto
+
+### 8.1 Requisitos
+
+Para ejecutar el proyecto se necesita:
+- FPGA Terasic DE10-Lite.
+- Microcontrolador ESP32.
+- Cables USB y jumpers (cables Dupont).
+- Intel Quartus Prime.
+- Arduino IDE.
+- MATLAB.
+
+---
+
+### 8.2 Configuración y programación de la FPGA
+
+1. Abrir el proyecto de la FPGA en Quartus Prime.
+2. Verificar que la entidad principal (*Top-Level Entity*) sea `top_uart_de10lite`.
+3. Comprobar que estén incluidos los módulos Verilog:
+   - `top_uart_de10lite.v`
+   - `process_number.v`
+   - `square_root.v`
+   - `uart_rx.v`
+   - `uart_tx.v`
+4. Asignar los pines correspondientes siguiendo la tabla de mapeo.
+5. Ejecutar **Processing → Start Compilation**.
+6. Si la compilación termina correctamente, cargar el archivo en la FPGA utilizando la herramienta **Programmer**.
+
+---
+
+### 8.3 Configuración del ESP32
+
+El ESP32 funciona como una pasarela bidireccional entre MATLAB y la FPGA.
+
+1. Abrir el código del ESP32 en Arduino IDE.
+2. Seleccionar la tarjeta ESP32 correspondiente y el puerto COM asignado.
+3. Verificar que la comunicación UART esté configurada a **9600 baudios**.
+4. Cargar el programa en el ESP32.
+
+---
+
+### 8.4 Conexiones físicas
+
+Realizar las siguientes conexiones entre el ESP32 y la FPGA:
+
+| ESP32 | FPGA DE10-Lite | Descripción |
+| :--- | :--- | :--- |
+| **GPIO 17 (TXD2)** | `UART_RX` (`PIN_V10`) | Envío de datos hacia la FPGA. |
+| **GPIO 16 (RXD2)** | `UART_TX` (`PIN_W10`) | Recepción de datos desde la FPGA. |
+| **GND** | `GND` | Referencia eléctrica común. |
+
+---
+
+### 8.5 Ejecución desde MATLAB
+
+1. Conectar el ESP32 a la computadora mediante USB.
+2. Identificar el puerto COM asignado en el sistema operativo y actualizarlo en la variable correspondiente dentro del archivo `test_uart_fpga.m`.
+3. Abrir y ejecutar el script desde MATLAB.
+4. Introducir los valores de entrada solicitados:
+   - **$n$**: número base (entero de 32 bits).
+   - **$p$**: numerador del exponente (entero de 8 bits).
+5. MATLAB envía la trama de datos al ESP32, el cual los transmite de manera transparente a la FPGA.
+6. La FPGA procesa la solicitud y devuelve el resultado a través de UART.
+7. MATLAB recibe, interpreta y muestra el resultado obtenido en formato decimal, junto con el valor teórico esperado y el error absoluto.
+
+---
+
+### 8.6 Secuencia recomendada de ejecución
+
+Para evitar inconvenientes durante las pruebas, se recomienda seguir estrictamente este orden:
+
+1. Compilar y programar la FPGA mediante Quartus Prime.
+2. Cargar el firmware al ESP32 mediante Arduino IDE.
+3. Realizar las conexiones físicas entre el ESP32 y la FPGA.
+4. Conectar el ESP32 a la computadora mediante USB.
+5. Identificar y configurar el puerto COM en el script de MATLAB.
+6. Ejecutar el archivo `test_uart_fpga.m`.
+7. Introducir los valores de entrada y observar el comportamiento del sistema.
+8. Comparar el resultado devuelto por la FPGA con el valor teórico calculado por MATLAB.
+
+---
+
+## 9. Solución de problemas comunes
+
+| Problema | Posible causa | Solución |
+| :--- | :--- | :--- |
+| **MATLAB no puede abrir el puerto COM** | Puerto incorrecto o actualmente utilizado por otro software. | Verificar el puerto asignado en el Administrador de dispositivos y cerrar cualquier otra aplicación que lo esté utilizando. |
+| **MATLAB no recibe respuesta** | ESP32 desconectado, FPGA sin programar o conexiones UART erróneas. | Revisar la alimentación de las tarjetas, la programación lógica y la correcta conexión cruzada de TX/RX y GND. |
+| **Los datos recibidos son incorrectos** | Discrepancia en la estructura de las tramas o configuración serial. | Comprobar que ambos dispositivos operen a 9600 baudios, formato 8N1 y utilicen el mismo orden de bytes. |
+| **Quartus muestra errores de compilación** | Archivos fuente faltantes, entidad principal mal definida o restricciones inválidas. | Revisar la inclusión de todos los módulos en el proyecto y las asignaciones descritas en el archivo. |
+| **El resultado de la FPGA difiere del esperado** | Error físico de comunicación, truncamiento numérico o mala interpretación del formato Q80.16. | Revisar los bytes recibidos en la trama y verificar la función de conversión a decimal dentro de MATLAB. |
